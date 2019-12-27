@@ -42,7 +42,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 
 	signalEvent, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
-		panic(err)
+		w.Log.Error(err.Error())
 	}
 	defer windows.CloseHandle(signalEvent)
 
@@ -56,7 +56,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 		w.Log.Error(err.Error())
 	}
 
-	eventHandles, err := wineventlog.EventHandles(eventSubs, 1)
+	eventHandles, err := wineventlog.EventHandles(eventSubs, 5)
 	if err != nil {
 		w.Log.Error(err.Error())
 	}
@@ -70,6 +70,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 
 		evt, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
 
+		acc.AddFields("event", map[string]interface{}{"RecordID}": evt.RecordID, evt.Message}, nil)
 		lastRecID = evt.RecordID
 
 	}
