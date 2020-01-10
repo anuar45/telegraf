@@ -1,12 +1,13 @@
+// +build windows
 package win_eventlog
 
 import (
 	"bytes"
 
-	winlogsys "github.com/elastic/beats/winlogbeat/sys"
-	"github.com/elastic/beats/winlogbeat/sys/wineventlog"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
+	winlogsys "github.com/influxdata/telegraf/plugins/inputs/win_eventlog/sys"
+	"github.com/influxdata/telegraf/plugins/inputs/win_eventlog/sys/wineventlog"
 	"golang.org/x/sys/windows"
 )
 
@@ -18,7 +19,7 @@ var sampleConfig = `
 `
 
 type WinEventLog struct {
-	eventlogName string `toml:"eventlog_name"`
+	EventlogName string `toml:"eventlog_name"`
 	query        string `toml:"xpath_query"`
 	bookmark     wineventlog.EvtHandle
 	buf          []byte
@@ -46,33 +47,50 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 	}
 	defer windows.CloseHandle(signalEvent)
 
-	bookmark, err := wineventlog.CreateBookmarkFromRecordID(w.eventlogName, lastRecID)
-	if err != nil {
-		w.Log.Error(err.Error())
+	if lastRecID == 0 {
+		lastRecID = w.getLastEventRecID()
+		//w.Log.Info("Last event RecID found:", lastRecID)
 	}
 
-	eventSubs, err := wineventlog.Subscribe(0, w.signal, w.eventlogName, w.query, w.bookmark, wineventlog.EvtSubscribeStartAfterBookmark)
+	w.bookmark, err = wineventlog.CreateBookmarkFromRecordID(w.EventlogName, lastRecID)
+	//w.Log.Info("Setting bookmark:", w.EventlogName, lastRecID)
 	if err != nil {
-		w.Log.Error(err.Error())
+		w.Log.Error("Setting bookmark:", err.Error(), w.EventlogName, lastRecID)
 	}
 
-	eventHandles, err := wineventlog.EventHandles(eventSubs, 5)
+	eventSubs, err := wineventlog.Subscribe(0, signalEvent, w.EventlogName, w.query, w.bookmark, wineventlog.EvtSubscribeStartAfterBookmark)
 	if err != nil {
-		w.Log.Error(err.Error())
+		w.Log.Error("Subscribing:", err.Error(), w.bookmark)
 	}
 
-	for _, eventRaw := range eventHandles {
-		w.out.Reset()
-		err := wineventlog.RenderEventXML(eventRaw, w.buf, w.out)
+	for {
+		eventHandles, err := wineventlog.EventHandles(eventSubs, 5)
 		if err != nil {
-			w.Log.Error(err.Error())
+			w.Log.Error("Getting handles:", err.Error())
 		}
 
-		evt, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
+		if err == wineventlog.ERROR_NO_MORE_ITEMS {
+			break
+		}
 
-		acc.AddFields("event", map[string]interface{}{"RecordID}": evt.RecordID, evt.Message}, nil)
-		lastRecID = evt.RecordID
+		for _, eventRaw := range eventHandles {
+			w.out.Reset()
+			err := wineventlog.RenderEventXML(eventRaw, w.buf, w.out)
+			if err != nil {
+				w.Log.Error("Rendering event:", err.Error())
+			}
 
+			evt, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
+
+			acc.AddFields("event",
+				map[string]interface{}{
+					"recordID": evt.RecordID,
+					"message":  evt.Message,
+				}, map[string]string{
+					"level": evt.Level,
+				})
+			lastRecID = evt.RecordID
+		}
 	}
 
 	return nil
@@ -81,7 +99,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 func (w *WinEventLog) getLastEventRecID() uint64 {
 
 	var lastEventRecID uint64
-	lastEventsHandle, err := wineventlog.EvtQuery(0, w.eventlogName, w.query, wineventlog.EvtQueryChannelPath|wineventlog.EvtQueryReverseDirection)
+	lastEventsHandle, err := wineventlog.EvtQuery(0, w.EventlogName, w.query, wineventlog.EvtQueryChannelPath|wineventlog.EvtQueryReverseDirection)
 
 	lastEventHandle, err := wineventlog.EventHandles(lastEventsHandle, 1)
 	if err != nil {
