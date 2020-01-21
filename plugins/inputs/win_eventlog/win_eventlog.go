@@ -3,6 +3,7 @@ package win_eventlog
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -20,12 +21,12 @@ var sampleConfig = `
 
 type WinEventLog struct {
 	EventlogName string `toml:"eventlog_name"`
-	query        string `toml:"xpath_query"`
+	Query        string `toml:"xpath_query"`
+	subscription wineventlog.EvtHandle
 	bookmark     wineventlog.EvtHandle
 	buf          []byte
 	out          *bytes.Buffer
 	Log          telegraf.Logger
-	signal       windows.Handle
 }
 
 var description = "Input plugin to collect Windows eventlog messages"
@@ -39,86 +40,98 @@ func (w *WinEventLog) SampleConfig() string {
 }
 
 func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
-	var lastRecID uint64
-
 	signalEvent, err := windows.CreateEvent(nil, 0, 0, nil)
 	if err != nil {
 		w.Log.Error(err.Error())
 	}
 	defer windows.CloseHandle(signalEvent)
+	w.Log.Debug("signalEvent:", signalEvent)
 
-	if lastRecID == 0 {
-		lastRecID = w.getLastEventRecID()
-		//w.Log.Info("Last event RecID found:", lastRecID)
+	// Initialize bookmark
+	if w.bookmark == 0 {
+		w.updateBookmark(0)
+		w.Log.Debug("w.bookmarkonce:", w.bookmark)
 	}
+	w.Log.Debug("w.bookmark:", w.bookmark)
 
-	w.bookmark, err = wineventlog.CreateBookmarkFromRecordID(w.EventlogName, lastRecID)
-	//w.Log.Info("Setting bookmark:", w.EventlogName, lastRecID)
-	if err != nil {
-		w.Log.Error("Setting bookmark:", err.Error(), w.EventlogName, lastRecID)
-	}
-
-	eventSubs, err := wineventlog.Subscribe(0, signalEvent, w.EventlogName, w.query, w.bookmark, wineventlog.EvtSubscribeStartAfterBookmark)
-	if err != nil {
-		w.Log.Error("Subscribing:", err.Error(), w.bookmark)
-	}
-
-	for {
-		eventHandles, err := wineventlog.EventHandles(eventSubs, 5)
+	if w.subscription == 0 {
+		w.subscription, err = wineventlog.Subscribe(0, signalEvent, w.EventlogName, w.Query, w.bookmark, wineventlog.EvtSubscribeStartAfterBookmark)
 		if err != nil {
-			w.Log.Error("Getting handles:", err.Error())
+			w.Log.Error("Subscribing:", err.Error(), w.bookmark)
+		}
+		w.Log.Debug("w.subscriptiononce:", w.bookmark)
+	}
+	w.Log.Debug("w.subscription:", w.subscription)
+
+	var eventHandle wineventlog.EvtHandle
+	for {
+		eventHandles, err := wineventlog.EventHandles(w.subscription, 5)
+		if err != nil {
+			switch {
+			case err == wineventlog.ERROR_NO_MORE_ITEMS:
+				return nil
+			case err != nil:
+				w.Log.Error("Getting handles:", err.Error())
+				return err
+			}
 		}
 
-		if err == wineventlog.ERROR_NO_MORE_ITEMS {
-			break
-		}
-
-		for _, eventRaw := range eventHandles {
+		for i := range eventHandles {
+			eventHandle = eventHandles[i]
 			w.out.Reset()
-			err := wineventlog.RenderEventXML(eventRaw, w.buf, w.out)
+			err := wineventlog.RenderEventXML(eventHandle, w.buf, w.out)
 			if err != nil {
 				w.Log.Error("Rendering event:", err.Error())
 			}
 
 			evt, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
 
-			acc.AddFields("event",
+			w.Log.Debug("MessageRaw:", w.out.String())
+
+			// Transform EventData to []string
+			var message []string
+			for _, kv := range evt.EventData.Pairs {
+				message = append(message, kv.Value)
+			}
+
+			// Pass collected metrics
+			acc.AddFields("win_event",
 				map[string]interface{}{
 					"recordID": evt.RecordID,
-					"message":  evt.Message,
+					"eventID":  evt.EventIdentifier.ID,
+					"message":  strings.Join(message, "\n"),
+					"source":   evt.Provider,
+					"created":  evt.TimeCreated.SystemTime.String(),
 				}, map[string]string{
 					"level": evt.Level,
 				})
-			lastRecID = evt.RecordID
 		}
 	}
 
+	w.updateBookmark(eventHandle)
 	return nil
 }
 
-func (w *WinEventLog) getLastEventRecID() uint64 {
+func (w *WinEventLog) updateBookmark(evt wineventlog.EvtHandle) {
+	if w.bookmark == 0 {
+		lastEventsHandle, err := wineventlog.EvtQuery(0, w.EventlogName, w.Query, wineventlog.EvtQueryChannelPath|wineventlog.EvtQueryReverseDirection)
 
-	var lastEventRecID uint64
-	lastEventsHandle, err := wineventlog.EvtQuery(0, w.EventlogName, w.query, wineventlog.EvtQueryChannelPath|wineventlog.EvtQueryReverseDirection)
+		lastEventHandle, err := wineventlog.EventHandles(lastEventsHandle, 1)
+		if err != nil {
+			w.Log.Error(err.Error())
+		}
 
-	lastEventHandle, err := wineventlog.EventHandles(lastEventsHandle, 1)
-	if err != nil {
-		w.Log.Error(err.Error())
+		w.bookmark, err = wineventlog.CreateBookmarkFromEvent(lastEventHandle[0])
+		if err != nil {
+			w.Log.Error("Setting bookmark:", err.Error())
+		}
+	} else {
+		var err error
+		w.bookmark, err = wineventlog.CreateBookmarkFromEvent(evt)
+		if err != nil {
+			w.Log.Error("Setting bookmark:", err.Error())
+		}
 	}
-
-	err = wineventlog.RenderEventXML(lastEventHandle[0], w.buf, w.out)
-	if err != nil {
-		w.Log.Error(err.Error())
-	}
-
-	lastEvent, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
-	if err != nil {
-		w.Log.Error(err.Error())
-	}
-
-	lastEventRecID = lastEvent.RecordID
-
-	return lastEventRecID
 }
 
 func init() {
