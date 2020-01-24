@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package wineventlog
+package win_eventlog
 
 import (
 	"bytes"
@@ -25,8 +25,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"github.com/joeshaw/multierror"
 )
 
 const (
@@ -73,9 +71,9 @@ type Query struct {
 // Build builds a query from the given parameters. The query is returned as a
 // XML string and can be used with Subscribe function.
 func (q Query) Build() (string, error) {
-	var errs multierror.Errors
+	//var errs multierror.Errors
 	if q.Log == "" {
-		errs = append(errs, fmt.Errorf("empty log name"))
+		return "", fmt.Errorf("empty log name")
 	}
 
 	qp := &queryParams{Path: q.Log}
@@ -87,12 +85,10 @@ func (q Query) Build() (string, error) {
 	}
 	for _, build := range builders {
 		if err := build(q); err != nil {
-			errs = append(errs, err)
+			return "", err
 		}
 	}
-	if len(errs) > 0 {
-		return "", errs.Err()
-	}
+
 	return executeTemplate(queryTemplate, qp)
 }
 

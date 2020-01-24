@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package sys
+package win_eventlog
 
 import (
 	"encoding/xml"
@@ -46,7 +46,7 @@ type Event struct {
 	Execution       Execution       `xml:"System>Execution"`
 	Channel         string          `xml:"System>Channel"`
 	Computer        string          `xml:"System>Computer"`
-	User            SID             `xml:"System>Security"`
+	// User            SID             `xml:"System>Security"`
 
 	EventData EventData `xml:"EventData"`
 	UserData  UserData  `xml:"UserData"`

@@ -7,8 +7,6 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	winlogsys "github.com/influxdata/telegraf/plugins/inputs/win_eventlog/sys"
-	"github.com/influxdata/telegraf/plugins/inputs/win_eventlog/sys/wineventlog"
 	"golang.org/x/sys/windows"
 )
 
@@ -22,8 +20,8 @@ var sampleConfig = `
 type WinEventLog struct {
 	EventlogName string `toml:"eventlog_name"`
 	Query        string `toml:"xpath_query"`
-	subscription wineventlog.EvtHandle
-	bookmark     wineventlog.EvtHandle
+	subscription EvtHandle
+	bookmark     EvtHandle
 	buf          []byte
 	out          *bytes.Buffer
 	Log          telegraf.Logger
@@ -55,7 +53,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 	w.Log.Debug("w.bookmark:", w.bookmark)
 
 	if w.subscription == 0 {
-		w.subscription, err = wineventlog.Subscribe(0, signalEvent, w.EventlogName, w.Query, w.bookmark, wineventlog.EvtSubscribeStartAfterBookmark)
+		w.subscription, err = Subscribe(0, signalEvent, w.EventlogName, w.Query, w.bookmark, EvtSubscribeStartAfterBookmark)
 		if err != nil {
 			w.Log.Error("Subscribing:", err.Error(), w.bookmark)
 		}
@@ -63,12 +61,12 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 	}
 	w.Log.Debug("w.subscription:", w.subscription)
 
-	var eventHandle wineventlog.EvtHandle
+	var eventHandle EvtHandle
 	for {
-		eventHandles, err := wineventlog.EventHandles(w.subscription, 5)
+		eventHandles, err := EventHandles(w.subscription, 5)
 		if err != nil {
 			switch {
-			case err == wineventlog.ERROR_NO_MORE_ITEMS:
+			case err == ERROR_NO_MORE_ITEMS:
 				return nil
 			case err != nil:
 				w.Log.Error("Getting handles:", err.Error())
@@ -79,12 +77,12 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 		for i := range eventHandles {
 			eventHandle = eventHandles[i]
 			w.out.Reset()
-			err := wineventlog.RenderEventXML(eventHandle, w.buf, w.out)
+			err := RenderEventXML(eventHandle, w.buf, w.out)
 			if err != nil {
 				w.Log.Error("Rendering event:", err.Error())
 			}
 
-			evt, _ := winlogsys.UnmarshalEventXML(w.out.Bytes())
+			evt, _ := UnmarshalEventXML(w.out.Bytes())
 
 			w.Log.Debug("MessageRaw:", w.out.String())
 
@@ -112,22 +110,22 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-func (w *WinEventLog) updateBookmark(evt wineventlog.EvtHandle) {
+func (w *WinEventLog) updateBookmark(evt EvtHandle) {
 	if w.bookmark == 0 {
-		lastEventsHandle, err := wineventlog.EvtQuery(0, w.EventlogName, w.Query, wineventlog.EvtQueryChannelPath|wineventlog.EvtQueryReverseDirection)
+		lastEventsHandle, err := EvtQuery(0, w.EventlogName, w.Query, EvtQueryChannelPath|EvtQueryReverseDirection)
 
-		lastEventHandle, err := wineventlog.EventHandles(lastEventsHandle, 1)
+		lastEventHandle, err := EventHandles(lastEventsHandle, 1)
 		if err != nil {
 			w.Log.Error(err.Error())
 		}
 
-		w.bookmark, err = wineventlog.CreateBookmarkFromEvent(lastEventHandle[0])
+		w.bookmark, err = CreateBookmarkFromEvent(lastEventHandle[0])
 		if err != nil {
 			w.Log.Error("Setting bookmark:", err.Error())
 		}
 	} else {
 		var err error
-		w.bookmark, err = wineventlog.CreateBookmarkFromEvent(evt)
+		w.bookmark, err = CreateBookmarkFromEvent(evt)
 		if err != nil {
 			w.Log.Error("Setting bookmark:", err.Error())
 		}

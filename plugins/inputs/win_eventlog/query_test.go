@@ -17,7 +17,7 @@
 
 // +build !integration
 
-package wineventlog
+package win_eventlog
 
 import (
 	"fmt"
