@@ -1,8 +1,10 @@
 // +build windows
+
 package win_eventlog
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 
 	"github.com/influxdata/telegraf"
@@ -15,6 +17,7 @@ const renderBufferSize = 1 << 14
 var sampleConfig = `
   ## Name of eventlog
   eventlog_name = "Application"
+  xpath_query = "Event/System[EventID=999]"
 `
 
 type WinEventLog struct {
@@ -69,7 +72,7 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 			case err == ERROR_NO_MORE_ITEMS:
 				return nil
 			case err != nil:
-				w.Log.Error("Getting handles:", err.Error())
+				w.Log.Error("Getting handles error:", err.Error())
 				return err
 			}
 		}
@@ -87,21 +90,22 @@ func (w *WinEventLog) Gather(acc telegraf.Accumulator) error {
 			w.Log.Debug("MessageRaw:", w.out.String())
 
 			// Transform EventData to []string
-			var message []string
+			var eventDesc []string
 			for _, kv := range evt.EventData.Pairs {
-				message = append(message, kv.Value)
+				eventDesc = append(eventDesc, kv.Value)
 			}
 
 			// Pass collected metrics
 			acc.AddFields("win_event",
 				map[string]interface{}{
-					"recordID": evt.RecordID,
-					"eventID":  evt.EventIdentifier.ID,
-					"message":  strings.Join(message, "\n"),
-					"source":   evt.Provider,
-					"created":  evt.TimeCreated.SystemTime.String(),
+					"record_id":   evt.RecordID,
+					"event_id":    evt.EventIdentifier.ID,
+					"description": strings.Join(eventDesc, "\n"),
+					"source":      evt.Provider.Name,
+					"created":     evt.TimeCreated.SystemTime.String(),
 				}, map[string]string{
-					"level": evt.Level,
+					"level":         strconv.Itoa(int(evt.LevelRaw)),
+					"eventlog_name": evt.Channel,
 				})
 		}
 	}

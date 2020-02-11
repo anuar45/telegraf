@@ -100,7 +100,7 @@ func TestXML(t *testing.T) {
 				Execution:       Execution{ProcessID: 920, ThreadID: 1152},
 				Channel:         "Microsoft-Windows-WinRM/Operational",
 				Computer:        "vagrant-2012-r2",
-				User:            SID{Identifier: "S-1-5-21-3541430928-2051711210-1391384369-1001"},
+				// User:            SID{Identifier: "S-1-5-21-3541430928-2051711210-1391384369-1001"},
 				EventData: EventData{
 					Pairs: []KeyValue{
 						{"param1", "winlogbeat"},
